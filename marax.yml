@@ -1,0 +1,26 @@
+# MaraX dashboard config
+
+port: /dev/ttyUSB0       # USB serial adapter (your user needs to be in the 'dialout' group)
+window_minutes: 30       # how much history to keep in memory
+
+# The temperature switch isn't in the serial data, so set it here.
+temp_setting: "II"       # "0", "I", or "II"
+
+# HX °C at which the machine counts as ready, per switch setting.
+# Placeholders: watch a few warm-ups and set ~1 °C below where HX levels off.
+ready_hx:
+  "0": 88
+  "I": 91
+  "II": 94
+stable_minutes: 3        # HX must hold steady this long...
+stable_band: 1           # ...within this many °C (max - min)
+
+# Ready sound
+sound: true
+sound_file: /opt/marax/rooster.wav
+sound_player: pw-play    # or paplay / aplay
+
+# Testing without the machine
+simulate: true
+sim_speed: 10            # simulated warm-up runs this many times faster than real time
+sim_mode: C
