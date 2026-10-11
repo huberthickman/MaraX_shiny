@@ -33,6 +33,7 @@ the machine.
 | `app.R` | The whole app: serial reader, rolling buffer, ready detection, charts, UI |
 | `marax.yml` | Configuration: serial port, temperature switch setting, thresholds, sound |
 | `README.md` | This file |
+| `LICENSE` | MIT License |
 
 ## Requirements
 
@@ -276,3 +277,10 @@ trade-off is that charts have no hover tooltips.
 - **Storage is isolated behind two functions:** `add_reading()` and
   `recent_readings()` are the only code that touches the buffer. Adding persistent
   storage, such as DuckDB, means changing only those two functions.
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Hubert Hickman.
+
+Lelit and MaraX are trademarks of their respective owners. This is an independent
+hobby project, not affiliated with or endorsed by Lelit.

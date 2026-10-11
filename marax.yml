@@ -21,7 +21,7 @@ stable_band: 1           # ...within this many °C (max - min)
 
 # Ready sound (beepr): a sound number or name, e.g. 7 / "shotgun" or 6 / "ready",
 # a path to your own .wav (e.g. /opt/marax/rooster.wav), or false for silence.
-sound: 7
+sound: 3
 
 # Testing without the machine
 simulate: true
