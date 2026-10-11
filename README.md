@@ -9,12 +9,19 @@ It's built to run full-screen on an old laptop sitting next to the machine
 Windows for development, and has a built-in simulator so you can work on it without
 the machine.
 
+![MaraX dashboard showing live data from a warmed-up machine and one espresso shot](images/screenshot.png)
+
+*Real data from a warmed-up MaraX in coffee mode. Around 08:33 a shot is pulled: the
+heater setpoint (dashed) jumps, the heater fires (shaded), and the steam boiler
+recovers.*
+
 ## Features
 
 - **Live tiles:** status, HX temperature (large), steam boiler temperature and
-  target, coffee/steam mode, and heater on/off.
-- **Temperature chart:** HX and steam boiler on one °C axis, with the steam target as
-  a dashed line, the ready threshold as a dotted line, and heater-on periods shaded.
+  setpoint, coffee/steam mode, and heater on/off.
+- **Temperature chart:** HX and steam boiler on one °C axis, with the controller's
+  heater setpoint as a dashed line, the ready threshold as a dotted line, and
+  heater-on periods shaded.
 - **Heater duty chart:** the share of the last 60 s the heater was on, which shows
   when the machine has settled.
 - **5 / 15 / 30-minute views,** with touch-sized buttons.
@@ -34,6 +41,7 @@ the machine.
 | `marax.yml` | Configuration: serial port, temperature switch setting, thresholds, sound |
 | `README.md` | This file |
 | `LICENSE` | MIT License |
+| `images/screenshot.png` | Screenshot used in this README |
 
 ## Requirements
 
@@ -80,7 +88,7 @@ C1.19,116,124,093,0840,1
 |---|---|---|
 | 1 | `C1.19` | Mode letter plus firmware version. `C` = coffee priority, `V` = steam priority |
 | 2 | `116` | Steam boiler temperature (°C) |
-| 3 | `124` | Steam boiler target temperature (°C) |
+| 3 | `124` | Steam boiler setpoint (°C). In coffee mode the controller moves this up and down to hold the HX temperature: it drops (e.g. to 112) to keep the heater off and jumps (e.g. to 136) to fire it during a shot |
 | 4 | `093` | Heat exchanger (HX) temperature (°C) |
 | 5 | `0840` | Fast-heat boost countdown (seconds); `0000` once boost has ended |
 | 6 | `1` | Heater on/off |
