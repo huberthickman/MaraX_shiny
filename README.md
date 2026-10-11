@@ -11,7 +11,7 @@ the machine.
 
 ![MaraX dashboard showing live data from a warmed-up machine and one espresso shot](images/screenshot.png)
 
-*Real data from a warmed-up MaraX in coffee mode. Around 08:33 a shot is pulled: the
+*Real data from a warmed-up MaraX in coffee mode. A shot has been pulled earlier: the
 heater setpoint (dashed) jumps, the heater fires (shaded), and the steam boiler
 recovers.*
 
