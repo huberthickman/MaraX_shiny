@@ -76,7 +76,9 @@ recent_readings <- function(minutes) {
 }
 
 # Parsing -------------------------------------------------------------------
-# V1 line: C1.19,116,124,093,0840,1  (mode+fw, steam, steam target, HX, boost, heater)
+# V1 line: C1.19,116,124,093,0840,1  (mode+fw, steam, steam setpoint, HX, boost, heater)
+# The steam setpoint is the controller's command, not a fixed target: in coffee mode
+# it drops to keep the heater off and jumps to fire it, to hold the HX temperature.
 parse_line <- function(line) {
   f <- trimws(strsplit(trimws(line), ",", fixed = TRUE)[[1]])
   if (length(f) < 6 || !grepl("^[CV][0-9.]+$", f[1])) {
@@ -454,7 +456,7 @@ draw_temps <- function(df, xlim) {
     cex = 0.95
   )
 
-  st <- gapped(df$ts, df$steam_target)
+  st <- gapped(df$ts, df$steam_target) # heater setpoint (dashed)
   lines(st$x, st$y, col = COL$steam, lty = 2, lwd = 1)
   s <- gapped(df$ts, df$steam)
   lines(s$x, s$y, col = COL$steam, lwd = 2)
@@ -578,7 +580,10 @@ ui <- tagList(
       class = "main",
       div(
         class = "toolbar",
-        span(class = "title", "Temperatures (°C) — shaded = heater on"),
+        span(
+          class = "title",
+          "Temperatures (°C) — dashed = heater setpoint, shaded = heater on"
+        ),
         uiOutput("window_buttons", inline = TRUE),
         actionButton("test_sound", "\U0001F514 Test")
       ),
@@ -667,7 +672,7 @@ server <- function(input, output, session) {
       tile(
         "Steam boiler",
         sprintf("%d°", round(last$steam)),
-        sprintf("target %d°", round(last$steam_target)),
+        sprintf("setpoint %d°", round(last$steam_target)),
         swatch = COL$steam
       ),
       div(

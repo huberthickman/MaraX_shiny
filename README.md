@@ -15,6 +15,8 @@ the machine.
 heater setpoint (dashed) jumps, the heater fires (shaded), and the steam boiler
 recovers.*
 
+*This is a work in progress.  The kiosk features are untested* 
+
 ## Features
 
 - **Live tiles:** status, HX temperature (large), steam boiler temperature and
