@@ -1,6 +1,10 @@
 # MaraX dashboard config
 
-port: /dev/ttyUSB0       # USB serial adapter (your user needs to be in the 'dialout' group)
+# USB serial adapter. "auto" picks the first one found; or give a path, e.g.
+#   Linux: /dev/ttyUSB0  (your user needs to be in the 'dialout' group)
+#   macOS: /dev/cu.usbserial-XXXX  (use cu., not tty.)
+#   Windows: COM3  (see Device Manager > Ports; needs install.packages("serial"))
+port: auto
 window_minutes: 30       # how much history to keep in memory
 
 # The temperature switch isn't in the serial data, so set it here.
@@ -15,10 +19,9 @@ ready_hx:
 stable_minutes: 3        # HX must hold steady this long...
 stable_band: 1           # ...within this many °C (max - min)
 
-# Ready sound
-sound: true
-sound_file: /opt/marax/rooster.wav
-sound_player: pw-play    # or paplay / aplay
+# Ready sound (beepr): a sound number or name, e.g. 7 / "shotgun" or 6 / "ready",
+# a path to your own .wav (e.g. /opt/marax/rooster.wav), or false for silence.
+sound: 7
 
 # Testing without the machine
 simulate: true
