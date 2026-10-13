@@ -4,18 +4,18 @@ A live touchscreen dashboard for the **Lelit MaraX V1** espresso machine, writte
 It reads the machine's serial data stream, charts the boiler and heat-exchanger
 temperatures as they change, and plays a sound when the machine is ready to brew.
 
-It's built to run full-screen on an old laptop sitting next to the machine
-(developed for a Dell Inspiron 11 3157 at 1366×768). It also runs on macOS, Linux and
-Windows for development, and has a built-in simulator so you can work on it without
-the machine.
+It runs in any browser and scales to the screen, from a small laptop up to a desktop
+monitor. It was built to run full-screen on an old 11-inch laptop sitting next to the
+machine, and runs on macOS, Linux and Windows. A built-in simulator lets you work on
+it without the machine.
 
-![MaraX dashboard showing live data from a warmed-up machine and one espresso shot](images/screenshot.png)
+![MaraX dashboard showing 30 minutes of steady-state data followed by one espresso shot](images/screenshot.png)
 
-*Real data from a warmed-up MaraX in coffee mode. A shot has been pulled earlier: the
-heater setpoint (dashed) jumps, the heater fires (shaded), and the steam boiler
-recovers.*
-
-*This is a work in progress.  The kiosk features are untested* 
+*Real data, coffee mode, switch I, shown at 1366×768. Until about 12:35 the machine holds
+HX between 93 and 94 °C, pulsing the heater as needed while the steam boiler drifts
+between 114 and 120 °C. Then a shot is pulled: the heater setpoint (dashed) jumps to
+136 °C, the heater runs flat out for about 2½ minutes (shaded), and HX briefly
+spikes before recovering.*
 
 ## Features
 
@@ -135,10 +135,10 @@ different driver.
 | `port` | `auto` | Serial port path or COM name, or `auto` |
 | `window_minutes` | `30` | Minutes of readings kept in memory |
 | `temp_setting` | `"II"` | Position of the machine's temperature switch: `"0"`, `"I"` or `"II"` |
-| `ready_hx` | 88 / 91 / 94 | HX °C threshold for "ready", one per switch setting |
+| `ready_hx` | 90 / 92 / 94 | HX °C threshold for "ready", one per switch setting |
 | `stable_minutes` | `3` | How long HX must hold steady before counting as ready |
 | `stable_band` | `1` | Maximum HX variation (°C) allowed during that time |
-| `sound` | `7` | beepr sound number or name (`7` / `"shotgun"`, `6` / `"ready"`, ...), a path to a `.wav`, or `false` for silence |
+| `sound` | `3` | beepr sound number or name (`3` / `"fanfare"`, `6` / `"ready"`, `7` / `"shotgun"`, ...), a path to a `.wav`, or `false` for silence |
 | `simulate` | `false` | Use the built-in simulator instead of the serial port |
 | `sim_speed` | `10` | Simulator speed-up factor |
 | `sim_mode` | `C` | Simulated mode letter: `C` or `V` |
@@ -148,11 +148,17 @@ variable to its path.
 
 ### Calibrating the ready threshold
 
-The `ready_hx` values are placeholders. To set yours:
+The defaults match the manual's nominal brew temperatures (0 = 90, I = 92,
+II = 94 °C). Switch I has been checked against real data: in steady state HX cycles
+between 93 and 94 °C, so 92 sits just below it. To check or set yours:
 
-1. Run the dashboard through two or three warm-ups at your usual switch setting.
-2. Note where the HX line levels off on the 30-minute view.
-3. Set `ready_hx` for that setting about 1 °C below that level.
+1. Leave the machine on well past warm-up (HX overshoots for a while after a cold
+   start or a shot, so wait for it to settle).
+2. On the 30-minute view, note the **lowest** HX value in its steady-state cycle.
+3. Set `ready_hx` for that switch position about 1 °C below that value.
+
+If the threshold is too high, the dips in the cycle keep the status on
+**Warming** and the alert never fires.
 
 ## How ready detection works
 
@@ -237,7 +243,7 @@ the kitchen.
 
 ### 4. Test the sound
 
-Press 🔔 **Test** on the dashboard. If it's silent, run `beepr::beep(7)` in R as the
+Press 🔔 **Test** on the dashboard. If it's silent, run `beepr::beep(3)` in R as the
 same user. If that's silent too, the problem is the audio setup rather than the app.
 
 ## Running on Windows 11
@@ -257,11 +263,17 @@ The Windows serial code path has not yet been tested against the machine.
 
 ## Display
 
-The layout is designed for **1366×768**. The tiles sit in a left column and the charts
-fill the rest of the screen. Sizes are based on the viewport, so the page fits without
-scrolling at that resolution, and it scales on larger screens.
+The tiles sit in a left column and the charts fill the rest of the screen. Everything
+is sized from the browser window, so the page fits without scrolling at any common
+laptop or desktop resolution:
 
-To preview the target size on another computer, open Chrome DevTools, turn on the
+- **Larger screens:** the charts grow to fill the space, and the tiles and text grow
+  up to a comfortable maximum.
+- **Smallest supported size:** about **1366×768**, the resolution of a typical
+  11-inch laptop. The layout is tested there both full-screen and in a browser
+  window with its toolbar showing. Much smaller windows can clip text in the tiles.
+
+To preview the smallest size on another computer, open Chrome DevTools, turn on the
 device toolbar, and set it to 1366 × 768 at DPR 1.
 
 Charts are drawn on the server with base R graphics and refresh every 2 seconds; the
@@ -276,7 +288,7 @@ trade-off is that charts have no hover tooltips.
 | Status shows **auto (none found)** | The adapter isn't detected. Check `ls /dev/cu.*`, `ls /dev/ttyUSB*`, or Device Manager |
 | Status stays on **Warming** | HX hasn't reached `ready_hx` for your `temp_setting`, or hasn't held steady. Recalibrate the threshold |
 | Status says **Ready** but there was no sound | The app started with the machine already hot (by design), or sound failed. Check the log and press 🔔 Test |
-| No sound from the user service | Run `beepr::beep(7)` as that user; make sure the desktop session is logged in |
+| No sound from the user service | Run `beepr::beep(3)` as that user; make sure the desktop session is logged in |
 
 ## Limitations and next steps
 
@@ -287,6 +299,10 @@ trade-off is that charts have no hover tooltips.
 - **Storage is isolated behind two functions:** `add_reading()` and
   `recent_readings()` are the only code that touches the buffer. Adding persistent
   storage, such as DuckDB, means changing only those two functions.
+
+## Acknowledgements
+
+Developed with assistance from [Claude](https://claude.ai).
 
 ## License
 

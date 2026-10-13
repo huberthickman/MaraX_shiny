@@ -11,19 +11,21 @@ window_minutes: 30       # how much history to keep in memory
 temp_setting: "II"       # "0", "I", or "II"
 
 # HX °C at which the machine counts as ready, per switch setting.
-# Placeholders: watch a few warm-ups and set ~1 °C below where HX levels off.
+# Set ~1 °C below the bottom of the steady-state HX cycle: every reading in the
+# last stable_minutes must be at or above it.
+# Manual brew temps: 0 = 90, I = 92, II = 94 °C.
 ready_hx:
-  "0": 88
-  "I": 91
-  "II": 94
+  "0": 90    # estimate, not yet measured
+  "I": 92    # measured: steady-state HX cycles 93-94 (2026-10-12)
+  "II": 94   # estimate, not yet measured
 stable_minutes: 3        # HX must hold steady this long...
 stable_band: 1           # ...within this many °C (max - min)
 
-# Ready sound (beepr): a sound number or name, e.g. 7 / "shotgun" or 6 / "ready",
-# a path to your own .wav (e.g. /opt/marax/rooster.wav), or false for silence.
+# Ready sound (beepr): a sound number or name, e.g. 3 / "fanfare", 6 / "ready" or
+# 7 / "shotgun", a path to your own .wav (e.g. /opt/marax/rooster.wav), or false for silence.
 sound: 3
 
 # Testing without the machine
-simulate: true
+simulate: false
 sim_speed: 10            # simulated warm-up runs this many times faster than real time
 sim_mode: C

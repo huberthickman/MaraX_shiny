@@ -106,11 +106,11 @@ alert <- new.env()
 alert$state <- "off" # off -> warming -> ready
 alert$ready_at <- NULL
 
-# cfg$sound: a beepr sound number or name (7 = "shotgun"), a path to a .wav,
+# cfg$sound: a beepr sound number or name (3 = "fanfare"), a path to a .wav,
 # or false to stay quiet.
 play_alert <- function() {
   message("MaraX ready at ", format(Sys.time(), "%H:%M:%S"))
-  snd <- cfg$sound %||% 7
+  snd <- cfg$sound %||% 3
   if (isFALSE(snd)) {
     return(invisible())
   }
