@@ -43,7 +43,8 @@ spikes before recovering.*
 | `marax.yml` | Configuration: serial port, temperature switch setting, thresholds, sound |
 | `README.md` | This file |
 | `LICENSE` | MIT License |
-| `images/screenshot.png` | Screenshot used in this README |
+| `images/screenshot.png` | Screenshot used in this README: steady state and a shot |
+| `images/warmup.png` | Screenshot used in this README: a cold-start warm-up |
 
 ## Requirements
 
@@ -182,6 +183,24 @@ The sound plays **once per warm-up**:
 
 The R console logs `MaraX ready at HH:MM:SS` when the alert fires. If playback fails,
 it logs `Sound failed: ...`.
+
+### What a warm-up looks like
+
+![MaraX dashboard showing a 30-minute cold-start warm-up](images/warmup.png)
+
+*A cold start in coffee mode, switch I. The machine is switched on at 05:40 with the
+steam boiler at about 30 °C and HX at 20 °C.*
+
+- **05:40 – 05:52, fast heat:** the heater runs flat out (shaded, and 100% duty) and
+  the steam boiler climbs steadily to about 140 °C. HX lags behind, rising slowly as
+  heat moves across from the boiler.
+- **05:52 – 05:55, handover:** the heater pulses briefly to hold the boiler near
+  140 °C, then switches off. The setpoint (dashed) steps down, first to about 126 °C,
+  later to 112 °C.
+- **After 05:55, coasting:** with the heater off, the boiler cools slowly while HX
+  overshoots to 98 °C and eases back toward its steady range.
+- **05:58, ready:** HX passed the threshold at about 05:55 and held steady for the
+  next 3 minutes, so the status turned **Ready**, about 18 minutes after switch-on.
 
 ## Running it as a kitchen display (Ubuntu)
 
