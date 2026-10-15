@@ -1,0 +1,15 @@
+# shinylive build output (built by GitHub Actions; local test builds stay local)
+site/
+
+# R session files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# Deployment metadata (rsconnect)
+rsconnect/
+
+# OS files
+.DS_Store
+Thumbs.db
