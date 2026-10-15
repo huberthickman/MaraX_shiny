@@ -26,6 +26,6 @@ stable_band: 1           # ...within this many °C (max - min)
 sound: 3
 
 # Testing without the machine
-simulate: false
+simulate: true
 sim_speed: 10            # simulated warm-up runs this many times faster than real time
 sim_mode: C
