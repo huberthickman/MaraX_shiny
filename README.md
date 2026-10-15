@@ -9,6 +9,17 @@ monitor. It was built to run full-screen on an old 11-inch laptop sitting next t
 machine, and runs on macOS, Linux and Windows. A built-in simulator lets you work on
 it without the machine.
 
+**[Try the live demo →](https://huberthickman.github.io/MaraX_shiny/)**
+
+The demo runs entirely in your browser with [shinylive](https://posit-dev.github.io/r-shinylive/),
+with no server and no espresso machine, using the built-in simulator. The first load
+takes a little while, because it downloads R itself into the browser. It's published
+automatically from `main` by a GitHub Actions workflow.
+
+> **Browser support:** the demo works in current Chrome, Firefox and Edge. It does
+> not currently load in Safari. The dashboard itself, running locally or on the
+> kitchen laptop, works in any modern browser, Safari included.
+
 ![MaraX dashboard showing 30 minutes of steady-state data followed by one espresso shot](images/screenshot.png)
 
 *Real data, coffee mode, switch I, shown at 1366×768. Until about 12:35 the machine holds
@@ -39,8 +50,10 @@ spikes before recovering.*
 
 | File | Purpose |
 |---|---|
-| `app.R` | The whole app: serial reader, rolling buffer, ready detection, charts, UI |
-| `marax.yml` | Configuration: serial port, temperature switch setting, thresholds, sound |
+| `marax_shiny_app/app.R` | The whole app: serial reader, rolling buffer, ready detection, charts, UI |
+| `marax_shiny_app/marax.yml` | Configuration: serial port, temperature switch setting, thresholds, sound |
+| `.github/workflows/deploy-shinylive.yml` | Builds the in-browser demo with shinylive and publishes it to GitHub Pages |
+| `.gitignore` | Keeps local build output (`site/`) and R session files out of the repo |
 | `README.md` | This file |
 | `LICENSE` | MIT License |
 | `images/screenshot.png` | Screenshot used in this README: steady state and a shot |
@@ -64,10 +77,10 @@ isn't needed there.
 
 ## Quick start (simulator)
 
-1. In `marax.yml`, set `simulate: true`.
-2. Run the app from its folder:
+1. In `marax_shiny_app/marax.yml`, set `simulate: true`.
+2. From the repository root, run:
    ```r
-   shiny::runApp("~/marax", port = 3838)
+   shiny::runApp("marax_shiny_app", port = 3838)
    ```
 3. Open <http://localhost:3838>.
 
@@ -202,30 +215,53 @@ steam boiler at about 30 °C and HX at 20 °C.*
 - **05:58, ready:** HX passed the threshold at about 05:55 and held steady for the
   next 3 minutes, so the status turned **Ready**, about 18 minutes after switch-on.
 
-## Running it as a kitchen display (Ubuntu)
+## Running it as a kitchen display (Ubuntu or Linux Mint)
 
-These steps set the app up on a dedicated Ubuntu laptop that logs in automatically to
-the desktop.
+These steps set the app up on a dedicated laptop that logs in automatically to the
+desktop and opens the dashboard full-screen. They haven't been tested end to end yet.
 
-### 1. Install R and the packages
+### 1. Install R, the packages and the app
 
-Use Ubuntu's R or CRAN's Ubuntu repository. Posit Public Package Manager serves
-prebuilt Linux binaries, which install much faster than building from source.
+Use your distribution's R or CRAN's Ubuntu repository. Posit Public Package Manager
+serves prebuilt Linux binaries, which install much faster than building from source.
+Then clone the repository:
 
-### 2. Start the app at boot as a user service
+```bash
+git clone https://github.com/huberthickman/MaraX_shiny.git ~/MaraX_shiny
+```
+
+Give your user access to the serial port (see [Finding the serial port](#finding-the-serial-port)):
+
+```bash
+sudo usermod -aG dialout $USER     # then log out and back in
+```
+
+### 2. Put this machine's settings outside the repository
+
+Keep the kitchen laptop's config in its own file, so `git pull` never conflicts with
+your local settings and the copy in the repository can stay set up for the demo:
+
+```bash
+mkdir -p ~/.config/marax
+cp ~/MaraX_shiny/marax_shiny_app/marax.yml ~/.config/marax/marax.yml
+```
+
+Edit `~/.config/marax/marax.yml`: set `simulate: false`, and set `temp_setting` and
+`ready_hx` for your machine. The service in the next step points the app at this
+file with the `MARAX_CONFIG` environment variable.
+
+### 3. Start the app at boot as a user service
 
 Run the app as a **user** service, not a system service, so it can reach the desktop's
-audio (PipeWire runs per user).
-
-Copy `app.R` and `marax.yml` to `~/marax`, then create
-`~/.config/systemd/user/marax.service`:
+audio (PipeWire runs per user). Create `~/.config/systemd/user/marax.service`:
 
 ```ini
 [Unit]
 Description=MaraX dashboard
 
 [Service]
-WorkingDirectory=%h/marax
+WorkingDirectory=%h/MaraX_shiny/marax_shiny_app
+Environment=MARAX_CONFIG=%h/.config/marax/marax.yml
 ExecStart=/usr/bin/Rscript -e "shiny::runApp('.', host = '127.0.0.1', port = 3838, launch.browser = FALSE)"
 Restart=on-failure
 RestartSec=5
@@ -234,7 +270,8 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-Enable it:
+Check that `/usr/bin/Rscript` matches the output of `which Rscript`; if R is installed
+somewhere else, use that path. Then enable the service:
 
 ```bash
 systemctl --user daemon-reload
@@ -243,27 +280,56 @@ sudo loginctl enable-linger $USER     # start at boot, not just at login
 journalctl --user -u marax -f         # follow the log
 ```
 
+Only one program can use the serial port and port 3838 at a time, so don't also run
+the app from Positron or RStudio while the service is running.
+
 To view the dashboard from other devices on your network, use `host = '0.0.0.0'`
 instead. The app has no login, so only do this on a network you trust.
 
-### 3. Open it full-screen
+### 4. Open it full-screen at login
 
-Create `~/.config/autostart/marax-kiosk.desktop`:
+The browser has to wait until the app is up, or it opens on a "can't connect" page.
+Create `~/.local/bin/marax-kiosk`:
+
+```bash
+#!/bin/bash
+# Wait for the dashboard to start, then open it full-screen.
+until (exec 3<>/dev/tcp/127.0.0.1/3838) 2>/dev/null; do sleep 2; done
+exec firefox --kiosk http://localhost:3838
+```
+
+Make it executable with `chmod +x ~/.local/bin/marax-kiosk`, then create
+`~/.config/autostart/marax-kiosk.desktop`, replacing `hubert` with your username
+(autostart files need the full path):
 
 ```ini
 [Desktop Entry]
 Type=Application
 Name=MaraX kiosk
-Exec=chromium --kiosk --noerrdialogs --disable-infobars http://localhost:3838
+Exec=/home/hubert/.local/bin/marax-kiosk
 ```
 
-Also turn on automatic login, and set screen blanking under Settings → Power to suit
-the kitchen.
+Firefox comes with both Ubuntu and Linux Mint. To use Chromium instead, change the
+last line of the script to `exec chromium --kiosk http://localhost:3838`. To leave
+kiosk mode, press Alt+F4.
 
-### 4. Test the sound
+Finally, in the desktop's settings, turn on **automatic login** for your user and set
+**screen blanking** to suit the kitchen. On Linux Mint these are under Login Window
+and Screensaver / Power Management; on Ubuntu, under Users and Power.
+
+### 5. Test the sound
 
 Press 🔔 **Test** on the dashboard. If it's silent, run `beepr::beep(3)` in R as the
 same user. If that's silent too, the problem is the audio setup rather than the app.
+The service starts at boot, but sound only works once the desktop session has logged
+in, which automatic login takes care of.
+
+### Updating
+
+```bash
+cd ~/MaraX_shiny && git pull
+systemctl --user restart marax
+```
 
 ## Running on Windows 11
 
@@ -274,7 +340,7 @@ same user. If that's silent too, the problem is the audio setup rather than the 
   ```
   "C:\Program Files\R\R-4.x.x\bin\Rscript.exe" -e "shiny::runApp('.', port = 3838)"
   ```
-  Set **Start in** to the app folder.
+  Set **Start in** to the `marax_shiny_app` folder of your copy of the repository.
 - Open it full-screen with Edge:
   `msedge --kiosk http://localhost:3838 --edge-kiosk-type=fullscreen`
 
