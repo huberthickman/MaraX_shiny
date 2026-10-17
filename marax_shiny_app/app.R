@@ -3,9 +3,11 @@
 # window (no database), draws live charts, and plays a sound when the machine
 # is ready.
 #
-# Run:  Rscript -e 'shiny::runApp("~/marax", port = 3838)'
-# Test without the machine: set `simulate: true` in marax.yml.
-# See README.md for setup.
+# Run (from the repository root):
+#   Rscript -e 'shiny::runApp("marax_shiny_app", port = 3838)'
+# Test without the machine: set `simulate: true` in marax.yml. With `sim_file`
+# set, the simulator replays a captured serial log; otherwise it generates a
+# synthetic warm-up. See README.md for setup.
 
 library(shiny)
 library(yaml) # config file
@@ -21,6 +23,34 @@ if (.Platform$OS.type == "windows") {
 
 cfg_path <- Sys.getenv("MARAX_CONFIG", "marax.yml")
 cfg <- yaml::read_yaml(cfg_path)
+
+# Logging ---------------------------------------------------------------------
+# Key events always go to the R console (in the browser demo: the browser's
+# JavaScript console). With `debug: true` there is also a heartbeat every 10 s.
+DEBUG <- isTRUE(cfg$debug %||% TRUE)
+log_msg <- function(...) {
+  message(format(Sys.time(), "%H:%M:%S"), " [marax] ", ...)
+}
+log_last <- new.env()
+dbg_every <- function(key, secs, ...) {
+  # debug message, at most every `secs`
+  if (!DEBUG) {
+    return(invisible())
+  }
+  last <- log_last[[key]]
+  if (is.null(last) || difftime(Sys.time(), last, units = "secs") >= secs) {
+    log_last[[key]] <- Sys.time()
+    log_msg(...)
+  }
+}
+log_msg(
+  "config: ",
+  normalizePath(cfg_path, mustWork = FALSE),
+  " | working dir: ",
+  getwd(),
+  " | ",
+  R.version.string
+)
 
 WINDOW_SEC <- (cfg$window_minutes %||% 30) * 60
 READY_HX <- cfg$ready_hx[[as.character(cfg$temp_setting)]]
@@ -49,6 +79,32 @@ COL <- list(
   duty = "#8a8984"
 )
 
+# Clock -----------------------------------------------------------------------
+# Live, this is the wall clock. In the simulator it is a virtual clock running
+# sim_speed times faster, so a 45-minute warm-up plays in a few minutes and the
+# time-based rules (chart windows, "steady for 3 minutes") speed up with it.
+SIMULATE <- isTRUE(cfg$simulate)
+SIM_SPEED <- if (SIMULATE) as.numeric(cfg$sim_speed %||% 10) else 1
+if (!isTRUE(SIM_SPEED > 0)) {
+  stop("sim_speed must be a number greater than 0")
+}
+clock <- new.env()
+clock$origin <- Sys.time() # virtual time at the moment wall0 was taken
+clock$wall0 <- Sys.time()
+
+now <- function() {
+  if (!SIMULATE) {
+    return(Sys.time())
+  }
+  clock$origin +
+    as.numeric(difftime(Sys.time(), clock$wall0, units = "secs")) * SIM_SPEED
+}
+
+reset_clock <- function(origin) {
+  clock$origin <- origin
+  clock$wall0 <- Sys.time()
+}
+
 # Rolling buffer ------------------------------------------------------------
 store <- new.env()
 store$df <- data.frame(
@@ -60,28 +116,46 @@ store$df <- data.frame(
   boost = numeric(),
   heat = numeric()
 )
-store$last_rx <- NULL
+store$last_rx <- NULL # wall-clock time data last arrived (for "No data" / off)
 
-add_reading <- function(r) {
-  now <- Sys.time()
-  df <- rbind(store$df, data.frame(ts = now, r))
-  store$df <- df[df$ts > now - WINDOW_SEC, , drop = FALSE]
-  store$last_rx <- now
-  check_ready()
+# `new`: parsed readings (see parse_lines); `ts`: their times (one, or one each).
+add_readings <- function(new, ts) {
+  if (is.null(new) || !nrow(new)) {
+    return(invisible())
+  }
+  new <- data.frame(ts = ts, new)
+  df <- rbind(store$df, new)
+  store$df <- df[df$ts > max(new$ts) - WINDOW_SEC, , drop = FALSE]
+  store$last_rx <- Sys.time()
+  check_ready(new)
+}
+
+clear_readings <- function() {
+  store$df <- store$df[0, ]
+  store$last_rx <- NULL
 }
 
 recent_readings <- function(minutes) {
   df <- store$df
-  df[df$ts > Sys.time() - minutes * 60, , drop = FALSE]
+  df[df$ts > now() - minutes * 60, , drop = FALSE]
 }
 
 # Parsing -------------------------------------------------------------------
 # V1 line: C1.19,116,124,093,0840,1  (mode+fw, steam, steam setpoint, HX, boost, heater)
 # The steam setpoint is the controller's command, not a fixed target: in coffee mode
 # it drops to keep the heater off and jumps to fire it, to hold the HX temperature.
+# The board zero-pads every field (temperatures 3 digits, countdown 4, heater 1),
+# so a field of the wrong width means a character was lost on the serial line:
+# e.g. "C1.23,10,140,050,0630,1" (steam 107 lost its "7"). Such lines are dropped,
+# because the damaged value is often still in range and would plot as a spike.
+FIELD_WIDTHS <- c(3, 3, 3, 4, 1)
+
 parse_line <- function(line) {
   f <- trimws(strsplit(trimws(line), ",", fixed = TRUE)[[1]])
-  if (length(f) < 6 || !grepl("^[CV][0-9.]+$", f[1])) {
+  if (length(f) < 6 || !grepl("^[CV][0-9]+\\.[0-9]+$", f[1])) {
+    return(NULL)
+  }
+  if (any(nchar(f[2:6]) != FIELD_WIDTHS) || !all(grepl("^[0-9]+$", f[2:6]))) {
     return(NULL)
   }
   n <- suppressWarnings(as.numeric(f[2:6]))
@@ -101,6 +175,23 @@ parse_line <- function(line) {
   )
 }
 
+# Parse several lines at once. Returns the valid readings as a data frame, plus
+# `ok`, which of the input lines they came from; NULL if none were valid.
+parse_lines <- function(lines) {
+  rows <- lapply(lines, parse_line)
+  ok <- !vapply(rows, is.null, logical(1))
+  if (!any(ok)) {
+    return(NULL)
+  }
+  rows <- rows[ok]
+  cols <- c("mode", "steam", "steam_target", "hx", "boost", "heat")
+  df <- as.data.frame(
+    lapply(setNames(cols, cols), function(k) unlist(lapply(rows, `[[`, k))),
+    stringsAsFactors = FALSE
+  )
+  list(rows = df, ok = ok)
+}
+
 # Ready alert -----------------------------------------------------------------
 alert <- new.env()
 alert$state <- "off" # off -> warming -> ready
@@ -109,7 +200,11 @@ alert$ready_at <- NULL
 # cfg$sound: a beepr sound number or name (3 = "fanfare"), a path to a .wav,
 # or false to stay quiet.
 play_alert <- function() {
-  message("MaraX ready at ", format(Sys.time(), "%H:%M:%S"))
+  message(
+    "MaraX ready at ",
+    format(now(), "%H:%M:%S"),
+    if (SIMULATE) " (simulator time)" else ""
+  )
   snd <- cfg$sound %||% 3
   if (isFALSE(snd)) {
     return(invisible())
@@ -121,7 +216,8 @@ play_alert <- function() {
   )
 }
 
-check_ready <- function() {
+# `new`: the readings just added (a batch can hold several lines).
+check_ready <- function(new) {
   df <- store$df
   last <- df[nrow(df), ]
   if (alert$state == "off") {
@@ -131,9 +227,9 @@ check_ready <- function() {
   if (alert$state != "warming") {
     return(invisible())
   }
-  # Only crow if we actually watched a warm-up (not when the app restarts
-  # while the machine is already hot).
-  if (last$boost > 0 || last$hx < READY_HX - 5) {
+  # Only sound the alert if we actually watched a warm-up (not when the app
+  # restarts while the machine is already hot).
+  if (any(new$boost > 0 | new$hx < READY_HX - 5)) {
     alert$saw_cold <- TRUE
   }
 
@@ -160,6 +256,41 @@ watchdog <- function() {
     alert$ready_at <- NULL
   }
 }
+
+# Background loop control ---------------------------------------------------------
+# The serial / replay / synthetic loops reschedule themselves with `later`.
+# Two things must stop them:
+#  - The app stopping. In an interactive R session (Positron, RStudio) `later`
+#    keeps running callbacks at the console prompt, so without this the loop
+#    would carry on after the app has stopped.
+#  - A newer copy of the app starting in the same R session, e.g. autoreload
+#    re-running app.R after an edit. The newest copy owns the loop; older
+#    copies notice at their next tick and stop.
+LOOP_ID <- paste(
+  Sys.getpid(),
+  format(Sys.time(), "%H%M%OS6"),
+  sample.int(1e6, 1),
+  sep = "-"
+)
+options(marax.loop_id = LOOP_ID)
+
+loop_alive <- function() identical(getOption("marax.loop_id"), LOOP_ID)
+
+schedule <- function(fun, delay) {
+  if (loop_alive()) {
+    return(invisible(later::later(fun, delay)))
+  }
+  close_serial() # release the port for whoever runs next
+  log_msg("background loop stopped")
+  invisible()
+}
+
+shiny::onStop(function() {
+  if (loop_alive()) {
+    options(marax.loop_id = NULL)
+  }
+  log_msg("app stopped")
+})
 
 # Serial input ----------------------------------------------------------------
 # port: a device path / COM name, or "auto" to use the USB serial adapter found
@@ -289,34 +420,174 @@ read_serial_lines <- function() {
   parts[nzchar(parts)]
 }
 
-poll_serial <- function() {
+# Returns how long to wait before the next poll.
+serial_step <- function() {
   if (!is.null(ser$con) && !port_present(ser$port)) {
+    log_msg("serial: ", ser$port, " disappeared (unplugged?)")
     close_serial()
-  } # unplugged
-  if (is.null(ser$con) && !open_serial()) {
-    watchdog()
-    later::later(poll_serial, 5) # retry
-    return(invisible())
+  }
+  if (is.null(ser$con)) {
+    if (!open_serial()) {
+      dbg_every("serial-wait", 60, "serial: waiting for port ", ser$port)
+      watchdog()
+      return(5) # retry
+    }
+    log_msg("serial: opened ", ser$port)
   }
   lines <- tryCatch(read_serial_lines(), error = function(e) {
+    log_msg("serial: read failed (", conditionMessage(e), "); reopening")
     close_serial()
     character()
   })
-  for (l in lines) {
-    r <- parse_line(l)
-    if (!is.null(r)) add_reading(r)
+  if (length(lines)) {
+    add_readings(parse_lines(lines)$rows, Sys.time())
   }
+  dbg_every(
+    "serial",
+    10,
+    "serial: ",
+    length(lines),
+    " lines this poll | buffer ",
+    nrow(store$df),
+    " rows | status ",
+    alert$state
+  )
   watchdog()
-  later::later(poll_serial, 0.25)
+  0.25
 }
 
-# Simulator (simulate: true) ----------------------------------------------------
-sim <- new.env()
-sim$t0 <- Sys.time()
+poll_serial <- function() {
+  delay <- tryCatch(serial_step(), error = function(e) {
+    log_msg("serial ERROR: ", conditionMessage(e))
+    5
+  })
+  schedule(poll_serial, delay)
+}
 
-sim_line <- function() {
-  t <- as.numeric(difftime(Sys.time(), sim$t0, units = "secs")) *
-    (cfg$sim_speed %||% 10)
+# Simulator: replay a capture (simulate: true, sim_file set) -------------------
+# A capture has one serial reading per line: an ISO timestamp, a tab, then the
+# raw line, e.g. "2026-10-17T07:04:33.878<TAB>C1.23,020,000,020,0000,0".
+# The replay keeps the original spacing between lines (divided by sim_speed),
+# and the charts show the original clock times.
+read_capture <- function(path) {
+  log_msg("replay: opening ", normalizePath(path, mustWork = FALSE))
+  x <- sub("\r$", "", readLines(path, warn = FALSE))
+  log_msg(
+    "replay: read ",
+    length(x),
+    " lines; first: ",
+    if (length(x)) encodeString(x[1]) else "(none)"
+  )
+  parts <- strsplit(x, "\t", fixed = TRUE)
+  parts <- parts[lengths(parts) >= 2]
+  ts <- as.POSIXct(vapply(parts, `[`, "", 1), format = "%Y-%m-%dT%H:%M:%OS")
+  raw <- vapply(parts, `[`, "", 2)
+  keep <- !is.na(ts)
+  log_msg(
+    "replay: ",
+    length(parts),
+    " lines have a tab; ",
+    sum(keep),
+    " have a readable timestamp"
+  )
+  ts <- ts[keep]
+  raw <- raw[keep]
+  if (length(ts) < 2) {
+    stop("No readable lines in sim_file '", path, "'")
+  }
+  o <- order(ts)
+  cap <- list(
+    start = ts[o][1],
+    off = as.numeric(difftime(ts[o], ts[o][1], units = "secs")),
+    raw = raw[o]
+  )
+  log_msg(sprintf(
+    "replay: %s to %s (%.1f min); plays in %.1f min at x%g",
+    format(cap$start, "%Y-%m-%d %H:%M:%S"),
+    format(ts[o][length(o)], "%H:%M:%S"),
+    max(cap$off) / 60,
+    max(cap$off) / 60 / SIM_SPEED,
+    SIM_SPEED
+  ))
+  cap
+}
+
+replay <- new.env()
+
+start_replay <- function() {
+  clear_readings()
+  alert$state <- "off" # behave like a fresh power-on
+  alert$ready_at <- NULL
+  reset_clock(replay$cap$start)
+  replay$i <- 1L # next line to play
+}
+
+replay_step <- function() {
+  cap <- replay$cap
+  n <- length(cap$off)
+  elapsed <- as.numeric(difftime(now(), cap$start, units = "secs"))
+  if (replay$i <= n) {
+    k <- findInterval(elapsed, cap$off) # last line that is due
+    if (k >= replay$i) {
+      idx <- replay$i:k
+      p <- parse_lines(cap$raw[idx])
+      if (!is.null(p)) {
+        add_readings(p$rows, cap$start + cap$off[idx][p$ok])
+      }
+      if (replay$i == 1L) {
+        log_msg(
+          "replay: first readings added (lines 1-",
+          k,
+          ", ",
+          if (is.null(p)) 0 else nrow(p$rows),
+          " valid); buffer has ",
+          nrow(store$df),
+          " rows"
+        )
+      }
+      replay$i <- k + 1L
+    }
+    dbg_every(
+      "replay",
+      10,
+      "replay: line ",
+      replay$i - 1L,
+      "/",
+      n,
+      " | simulator time ",
+      format(now(), "%H:%M:%S"),
+      " | buffer ",
+      nrow(store$df),
+      " rows",
+      if (nrow(store$df)) {
+        paste0(", newest ", format(max(store$df$ts), "%H:%M:%S"))
+      } else {
+        ""
+      },
+      " | status ",
+      alert$state
+    )
+  } else if (isTRUE(cfg$sim_loop %||% TRUE) && elapsed > cap$off[n] + 5) {
+    log_msg("replay: reached the end; starting again")
+    start_replay() # loop: play it again from the start
+  }
+  watchdog()
+}
+
+# Errors are logged and the loop keeps going; otherwise one error would stop
+# the replay silently and leave the dashboard on "Waiting for data".
+poll_replay <- function() {
+  tryCatch(replay_step(), error = function(e) {
+    log_msg("replay ERROR: ", conditionMessage(e))
+  })
+  schedule(poll_replay, 0.25)
+}
+
+# Simulator: synthetic warm-up (simulate: true, no sim_file) -----------------
+sim <- new.env()
+
+# One synthetic line for `t` seconds (simulator time) after power-on.
+sim_line <- function(t) {
   target <- 124
   base <- target - (target - 22) * exp(-t / 240)
   osc <- 1.5 * sin(t / 40) * (1 - exp(-t / 240))
@@ -324,8 +595,7 @@ sim_line <- function() {
   hx_end <- READY_HX + 2
   hx <- hx_end - (hx_end - 22) * exp(-t / 420)
   ph <- t %% 600
-  # A simulated "shot" every 10 min, starting after the machine has gone ready
-  # (at sim_speed 10, ready fires ~6 min of real time after start).
+  # A simulated "shot" every 10 min, starting after the machine has gone ready.
   if (t > 4800 && ph < 30) {
     hx <- hx - 6 * sin(pi * ph / 30)
   }
@@ -340,18 +610,97 @@ sim_line <- function() {
   )
 }
 
-poll_sim <- function() {
-  r <- parse_line(sim_line())
-  if (!is.null(r)) {
-    add_reading(r)
+# Emit a line every 0.5 s of simulator time, like the real machine.
+sim_step <- function() {
+  t_now <- as.numeric(difftime(now(), sim$t0, units = "secs"))
+  if (sim$next_t <= t_now) {
+    first <- sim$next_t == 0
+    t <- seq(sim$next_t, t_now, by = 0.5)
+    p <- parse_lines(vapply(t, sim_line, ""))
+    if (!is.null(p)) {
+      add_readings(p$rows, sim$t0 + t[p$ok])
+    }
+    sim$next_t <- max(t) + 0.5
+    if (first) {
+      log_msg(
+        "synthetic: first readings added; buffer has ",
+        nrow(store$df),
+        " rows"
+      )
+    }
   }
-  later::later(poll_sim, 0.5)
+  dbg_every(
+    "sim",
+    10,
+    "synthetic: simulator time ",
+    format(now(), "%H:%M:%S"),
+    " | buffer ",
+    nrow(store$df),
+    " rows | status ",
+    alert$state
+  )
 }
 
-if (isTRUE(cfg$simulate)) {
-  poll_sim()
+poll_sim <- function() {
+  tryCatch(sim_step(), error = function(e) {
+    log_msg("synthetic ERROR: ", conditionMessage(e))
+  })
+  schedule(poll_sim, 0.25)
+}
+
+# Start -----------------------------------------------------------------------
+SIM_FILE <- if (SIMULATE && length(cfg$sim_file) && nzchar(cfg$sim_file)) {
+  cfg$sim_file
 } else {
+  NULL
+}
+SIM_LABEL <- NULL
+MODE <- if (!SIMULATE) {
+  "live serial"
+} else if (!is.null(SIM_FILE) && file.exists(SIM_FILE)) {
+  "replay"
+} else {
+  "synthetic"
+}
+
+if (!SIMULATE) {
+  log_msg(
+    "mode: live serial (port setting: ",
+    PORT_CFG,
+    "); set simulate: true to use the simulator"
+  )
   poll_serial()
+} else if (!is.null(SIM_FILE) && file.exists(SIM_FILE)) {
+  log_msg(
+    "mode: replay of '",
+    SIM_FILE,
+    "' at x",
+    SIM_SPEED,
+    if (isTRUE(cfg$sim_loop %||% TRUE)) ", looping" else ", once"
+  )
+  replay$cap <- read_capture(SIM_FILE)
+  SIM_LABEL <- sprintf(
+    "Replay of %s · ×%g",
+    format(replay$cap$start, "%d %b %H:%M"),
+    SIM_SPEED
+  )
+  start_replay()
+  poll_replay()
+} else {
+  if (!is.null(SIM_FILE)) {
+    log_msg(
+      "sim_file '",
+      SIM_FILE,
+      "' not found in ",
+      getwd(),
+      "; using the synthetic warm-up"
+    )
+  }
+  log_msg("mode: synthetic warm-up at x", SIM_SPEED)
+  SIM_LABEL <- sprintf("Simulated · ×%g", SIM_SPEED)
+  sim$t0 <- now()
+  sim$next_t <- 0
+  poll_sim()
 }
 
 # Chart helpers -----------------------------------------------------------------
@@ -550,8 +899,24 @@ html, body { height:100%%; background:%1$s; color:%2$s; margin:0; overflow:hidde
 .toolbar { flex:0 0 auto; display:flex; align-items:center; gap:8px; margin-bottom:4px; }
 .toolbar .title { font-size:clamp(13px, 2vh, 16px); color:%4$s; margin-right:auto; }
 .toolbar .btn { min-width:70px; min-height:42px; font-size:16px; border-radius:8px;
-  background:%3$s; color:%2$s; border:1px solid #3a3a37; padding:4px 10px; }
-.toolbar .btn.active { background:#3a3a37; border-color:%4$s; }
+  padding:4px 10px; }
+/* Pin every button state to the dark theme. Bootstrap's own hover/focus/pressed
+   styles use a light background, which stays after a tap (focus, and sticky
+   hover on touchscreens) and hid the light label text. */
+.toolbar .btn, .toolbar .btn:hover, .toolbar .btn:focus, .toolbar .btn:active,
+.toolbar .btn:active:hover, .toolbar .btn:active:focus, .toolbar .btn:focus:hover {
+  background:%3$s !important; color:%2$s !important; border:1px solid #3a3a37 !important;
+  box-shadow:none !important; outline:none; }
+.toolbar .btn.active, .toolbar .btn.active:hover, .toolbar .btn.active:focus,
+.toolbar .btn.active:active {
+  background:#3a3a37 !important; border-color:%4$s !important; }
+/* Keyboard users still get a visible focus ring; mouse and touch don't. */
+.toolbar .btn:focus-visible { outline:2px solid %4$s; outline-offset:2px; }
+/* Hover feedback only where a real pointer exists (not on touchscreens). */
+@media (hover: hover) {
+  .toolbar .btn:not(.active):hover { background:#2c2c2a !important; } }
+.toolbar .sim { font-size:clamp(12px, 1.8vh, 14px); color:%4$s; border:1px solid #3a3a37;
+  border-radius:8px; padding:4px 10px; white-space:nowrap; }
 .chart { min-height:0; }
 .chart.temp { flex:3 1 0; }
 .chart.duty { flex:1 1 0; }
@@ -584,6 +949,7 @@ ui <- tagList(
           class = "title",
           "Temperatures (°C) — dashed = heater setpoint, shaded = heater on"
         ),
+        if (!is.null(SIM_LABEL)) span(class = "sim", SIM_LABEL),
         uiOutput("window_buttons", inline = TRUE),
         actionButton("test_sound", "\U0001F514 Test")
       ),
@@ -634,11 +1000,7 @@ server <- function(input, output, session) {
       difftime(Sys.time(), store$last_rx, units = "secs") > STALE_SEC
     if (!nrow(df) || stale) {
       return(tagList(
-        tile(
-          "Status",
-          "No data",
-          if (isTRUE(cfg$simulate)) "simulator" else ser$port
-        ),
+        tile("Status", "No data", if (SIMULATE) "simulator" else ser$port),
         tile("HX", "—", swatch = COL$hx, class = "big"),
         tile("Steam boiler", "—", swatch = COL$steam),
         div(class = "pair", tile("Mode", "—"), tile("Heater", "—"))
@@ -692,9 +1054,37 @@ server <- function(input, output, session) {
       invalidateLater(2000)
       df <- recent_readings(win())
       if (nrow(df) < 2) {
+        all <- store$df
+        dbg_every(
+          "chart",
+          10,
+          "chart (",
+          MODE,
+          " mode): ",
+          nrow(df),
+          " readings in the last ",
+          win(),
+          " min | buffer ",
+          nrow(all),
+          " rows",
+          if (nrow(all)) {
+            paste0(
+              " (",
+              format(min(all$ts), "%H:%M:%S"),
+              " to ",
+              format(max(all$ts), "%H:%M:%S"),
+              ")"
+            )
+          } else {
+            ""
+          },
+          " | clock now ",
+          format(now(), "%Y-%m-%d %H:%M:%S")
+        )
         return(empty_plot("Waiting for data…"))
       }
-      draw_temps(df, c(Sys.time() - win() * 60, Sys.time()))
+      t_end <- now()
+      draw_temps(df, c(t_end - win() * 60, t_end))
     },
     res = 96,
     bg = COL$bg
@@ -707,7 +1097,8 @@ server <- function(input, output, session) {
       if (nrow(df) < 2) {
         return(empty_plot(""))
       }
-      draw_duty(df, c(Sys.time() - win() * 60, Sys.time()))
+      t_end <- now()
+      draw_duty(df, c(t_end - win() * 60, t_end))
     },
     res = 96,
     bg = COL$bg

@@ -8,7 +8,7 @@ port: auto
 window_minutes: 30       # how much history to keep in memory
 
 # The temperature switch isn't in the serial data, so set it here.
-temp_setting: "II"       # "0", "I", or "II"
+temp_setting: "I"       # "0", "I", or "II"
 
 # HX °C at which the machine counts as ready, per switch setting.
 # Set ~1 °C below the bottom of the steady-state HX cycle: every reading in the
@@ -27,5 +27,11 @@ sound: 3
 
 # Testing without the machine
 simulate: true
-sim_speed: 10            # simulated warm-up runs this many times faster than real time
-sim_mode: C
+sim_file: sample_data.tsv  # capture to replay (in the app folder); leave blank for a synthetic warm-up
+sim_speed: 10              # play this many times faster than real time (1 = real time)
+sim_loop: true             # start the replay again when it reaches the end
+sim_mode: C                # synthetic warm-up only: C (coffee) or V (steam)
+
+# Extra log lines in the R console (a status line every 10 s). Key events such
+# as the mode, opening the replay file and errors are always logged.
+debug: true

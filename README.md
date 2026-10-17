@@ -12,7 +12,8 @@ it without the machine.
 **[Try the live demo →](https://huberthickman.github.io/MaraX_shiny/)**
 
 The demo runs entirely in your browser with [shinylive](https://posit-dev.github.io/r-shinylive/),
-with no server and no espresso machine, using the built-in simulator. The first load
+with no server and no espresso machine: it replays a real morning's warm-up and a shot,
+captured from the machine's serial port, at 10× speed. The first load
 takes a little while, because it downloads R itself into the browser. It's published
 automatically from `main` by a GitHub Actions workflow.
 
@@ -41,7 +42,8 @@ spikes before recovering.*
 - **Ready alert:** plays a sound once per warm-up when HX has reached your threshold
   and held steady. A 🔔 **Test** button plays it on demand.
 - **No database:** keeps a rolling 30-minute window in memory, with no disk writes.
-- **Simulator:** generates a sped-up warm-up so you can test the layout and the
+- **Simulator:** replays a captured serial log from the real machine (or, without
+  one, a synthetic warm-up) at adjustable speed, so you can test the layout and the
   alert without the machine.
 - **One R process, three platforms:** reads the serial port on macOS, Linux and
   Windows.
@@ -52,6 +54,7 @@ spikes before recovering.*
 |---|---|
 | `marax_shiny_app/app.R` | The whole app: serial reader, rolling buffer, ready detection, charts, UI |
 | `marax_shiny_app/marax.yml` | Configuration: serial port, temperature switch setting, thresholds, sound |
+| `marax_shiny_app/sample_data.tsv` | A 46-minute capture from the machine (cold start to a shot), replayed by the simulator |
 | `.github/workflows/deploy-shinylive.yml` | Builds the in-browser demo with shinylive and publishes it to GitHub Pages |
 | `.gitignore` | Keeps local build output (`site/`) and R session files out of the repo |
 | `README.md` | This file |
@@ -84,10 +87,29 @@ isn't needed there.
    ```
 3. Open <http://localhost:3838>.
 
-The simulator runs a warm-up 10× faster than real time (`sim_speed`), so the
-fast-heat countdown finishes in about 2 minutes. The ready alert fires about 6 minutes
-after start, because HX must hold steady for `stable_minutes` of *real* time; the
-speed-up doesn't shorten that. Simulated shots (brief HX dips) start after that.
+With `sim_file: sample_data.tsv`, the simulator replays a real capture: a cold start
+at 07:04, the fast-heat phase, the machine settling, and a shot at about 07:47. It
+plays `sim_speed` times faster than real time (10× by default, so the 46 minutes take
+under 5), and the charts show the original clock times. The ready alert fires at
+07:26 replay time, about 2 minutes in. With `sim_loop: true` it starts again from the
+cold start when it reaches the end.
+
+Everything time-based speeds up with it, including the chart windows and the
+3-minute steadiness rule, so the replay behaves the same at any speed. If `sim_file`
+is blank or missing, the simulator generates a synthetic warm-up instead.
+
+### Capturing your own replay file
+
+A capture has one reading per line: an ISO timestamp, a tab, then the raw serial
+line, e.g. `2026-10-17T07:04:33.878<TAB>C1.23,020,000,020,0000,0`. On Linux, with
+the dashboard stopped (two programs can't share the port), this records one:
+
+```bash
+stty -F /dev/ttyUSB0 9600 raw -echo
+cat /dev/ttyUSB0 | while IFS= read -r l; do printf '%s\t%s\n' "$(date +%FT%T.%3N)" "$l"; done > capture.tsv
+```
+
+Stop it with Ctrl-C, put the file in `marax_shiny_app/`, and point `sim_file` at it.
 
 ## Connecting to the machine
 
@@ -109,8 +131,15 @@ C1.19,116,124,093,0840,1
 | 5 | `0840` | Fast-heat boost countdown (seconds); `0000` once boost has ended |
 | 6 | `1` | Heater on/off |
 
-Some later firmware adds a seventh pump on/off field; the app ignores it. Lines that
-are garbled, have too few fields, or have out-of-range values are dropped.
+Some later firmware adds a seventh pump on/off field; the app ignores it.
+
+Every field is zero-padded to a fixed width (temperatures 3 digits, countdown 4,
+heater 1). Now and then a character gets lost on the serial line, e.g.
+`C1.23,10,140,050,0630,1`, where steam `107` arrived as `10`. The damaged value is
+usually still in range and would plot as a spike, so the app drops any line whose
+fields aren't the expected width, along with lines that are garbled, have too few
+fields, or have out-of-range values. The sample capture has seven such lines in
+46 minutes.
 
 The physical temperature switch (0 / I / II) is **not** in the data stream, so you set
 it in `marax.yml`.
@@ -154,8 +183,10 @@ different driver.
 | `stable_band` | `1` | Maximum HX variation (°C) allowed during that time |
 | `sound` | `3` | beepr sound number or name (`3` / `"fanfare"`, `6` / `"ready"`, `7` / `"shotgun"`, ...), a path to a `.wav`, or `false` for silence |
 | `simulate` | `false` | Use the built-in simulator instead of the serial port |
-| `sim_speed` | `10` | Simulator speed-up factor |
-| `sim_mode` | `C` | Simulated mode letter: `C` or `V` |
+| `sim_file` | `sample_data.tsv` | Capture to replay, relative to the app folder; blank for a synthetic warm-up |
+| `sim_speed` | `10` | How many times faster than real time the simulator runs (`1` = real time) |
+| `sim_loop` | `true` | Start the replay again from the beginning when it reaches the end |
+| `sim_mode` | `C` | Synthetic warm-up only: mode letter `C` or `V` |
 
 To load a config file from somewhere else, set the `MARAX_CONFIG` environment
 variable to its path.
