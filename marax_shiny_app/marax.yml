@@ -34,4 +34,4 @@ sim_mode: C                # synthetic warm-up only: C (coffee) or V (steam)
 
 # Extra log lines in the R console (a status line every 10 s). Key events such
 # as the mode, opening the replay file and errors are always logged.
-debug: true
+debug: false
