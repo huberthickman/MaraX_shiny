@@ -929,10 +929,17 @@ html, body { height:100%%; background:%1$s; color:%2$s; margin:0; overflow:hidde
   COL$ready
 )
 
+# Browser tab icon: a ☕ emoji drawn as an inline SVG, so no image file is needed.
+# The shinylive build adds the same icon through its export template (see
+# .github/workflows/deploy-shinylive.yml), since there the tab belongs to the
+# outer page.
+FAVICON <- "data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20viewBox=%270%200%20100%20100%27%3E%3Ctext%20y=%27.9em%27%20font-size=%2790%27%3E%E2%98%95%3C/text%3E%3C/svg%3E"
+
 ui <- tagList(
   tags$head(
     tags$style(HTML(css)),
-    tags$title("MaraX"),
+    tags$title("MaraX Dashboard"),
+    tags$link(rel = "icon", href = FAVICON),
     tags$meta(
       name = "viewport",
       content = "width=device-width, initial-scale=1"
